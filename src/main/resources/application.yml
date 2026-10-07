@@ -1,0 +1,45 @@
+spring:
+  application:
+    name: interview-mind
+
+  datasource:
+    url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DB:postgres}
+    username: ${POSTGRES_USERNAME:postgres}
+    password: ${POSTGRES_PASSWORD:123456}
+
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 20MB
+
+  ai:
+    openai:
+      api-key: ${OPENAI_API_KEY:sk-b682278f65b34b00b9c6d6bd6f2caec2}
+      base-url: ${OPENAI_BASE_URL:https://dashscope.aliyuncs.com}
+      chat:
+        options:
+          model: ${OPENAI_CHAT_MODEL:qwen3.8-27b}
+          temperature: 0
+    vectorstore:
+      pgvector:
+        initialize-schema: false
+
+mybatis-plus:
+  mapper-locations: classpath:/mappers/*.xml
+  configuration:
+    map-underscore-to-camel-case: true
+
+minio:
+  endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+  access-key: ${MINIO_ACCESS_KEY:minio}
+  secret-key: ${MINIO_SECRET_KEY:123456789}
+  bucket: ${MINIO_BUCKET:interview-files}
+
+server:
+  port: 8080
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
