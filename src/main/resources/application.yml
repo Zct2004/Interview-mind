@@ -15,14 +15,26 @@ spring:
   ai:
     openai:
       api-key: ${OPENAI_API_KEY:sk-b682278f65b34b00b9c6d6bd6f2caec2}
-      base-url: ${OPENAI_BASE_URL:https://dashscope.aliyuncs.com}
+      # DashScope OpenAI 兼容模式要求 /compatible-mode/v1 前缀（直连 /v1/chat/completions 返回 404）
+      base-url: ${OPENAI_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
       chat:
+        # DashScope Qwen3 系列兼容参数：关闭深度思考，单次解析 ~128s → ~20s（结果质量相同）
+        extra-body:
+          enable_thinking: false
         options:
           model: ${OPENAI_CHAT_MODEL:qwen3.8-27b}
           temperature: 0
+      # Embedding 与 Chat 职责分离：仅新增 Embedding 配置，不触碰上方任何 Chat 配置。
+      # base-url/api-key 继承 spring.ai.openai.*；DashScope OpenAI 兼容 /v1/embeddings
+      # 已实测可用（模型回显 qwen3.7-text-embedding，输出维度 1024）
+      embedding:
+        model: ${OPENAI_EMBEDDING_MODEL:qwen3.7-text-embedding}
     vectorstore:
       pgvector:
-        initialize-schema: false
+        # true = 由 Spring AI 官方 DDL 自动建表（全部 IF NOT EXISTS，幂等，不手写 vector 表）
+        initialize-schema: true
+        # qwen3.7-text-embedding 实测输出维度，与 vector_store.embedding 列对齐
+        dimensions: 1024
 
 mybatis-plus:
   mapper-locations: classpath:/mappers/*.xml

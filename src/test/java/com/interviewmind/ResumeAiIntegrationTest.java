@@ -17,7 +17,6 @@ import io.minio.messages.Item;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -42,12 +41,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * 真实 LLM 集成测试：MinIO 真实简历 → PDFBox → Spring AI → OpenAI → ResumeProfile。
  * <p>
  * 默认 mvn test 通过 surefire excludedGroups=ai 排除本类（不消耗 token）；
- * 运行 mvn -Pai-test test 时纳入执行；同时要求环境变量 OPENAI_API_KEY 存在，
- * 否则由 {@link EnabledIfEnvironmentVariable} 跳过。
+ * 运行 mvn -Pai-test test 时纳入执行，直接复用 application.yml 中已配置的
+ * spring.ai.openai（不读环境变量、不改任何 AI 配置）。
  * 断言保持宽松，不因 LLM 输出的轻微波动失败。
  */
 @Tag("ai")
-@EnabledIfEnvironmentVariable(named = "OPENAI_API_KEY", matches = ".+")
 @SpringBootTest
 @AutoConfigureMockMvc
 class ResumeAiIntegrationTest {
