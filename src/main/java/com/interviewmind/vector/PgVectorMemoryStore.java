@@ -69,7 +69,8 @@ public class PgVectorMemoryStore implements InterviewMemoryStore {
         Long sessionId = asLong(metadata.get("sessionId"));
         String memoryType = asText(metadata.get("memoryType"));
         String content = document.getText();
-        if (resumeId == null || sessionId == null || memoryType == null || content == null) {
+        // 录音复盘记忆没有模拟面试 sessionId；resumeId 才是个人知识库隔离边界。
+        if (resumeId == null || memoryType == null || content == null) {
             return null;
         }
         MemoryType type;

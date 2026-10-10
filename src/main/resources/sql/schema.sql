@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS file_metadata
     bucket_name   VARCHAR(100) NOT NULL,
     content_type  VARCHAR(100),
     file_size     BIGINT,
+    content_sha256 VARCHAR(64) UNIQUE,
     created_at    TIMESTAMP    NOT NULL,
     updated_at    TIMESTAMP    NOT NULL
 );
@@ -129,3 +130,45 @@ CREATE TABLE IF NOT EXISTS interview_report
     CONSTRAINT fk_interview_report_session
         FOREIGN KEY (session_id) REFERENCES interview_session (id) ON DELETE CASCADE
 );
+
+-- 历史录音的结构化复盘主记录；只保存 LLM 解析结果，不保存 ASR 原文。
+CREATE TABLE IF NOT EXISTS recording_review
+(
+    id                 BIGSERIAL PRIMARY KEY,
+    object_key         VARCHAR(500) NOT NULL UNIQUE,
+    resume_id           BIGINT REFERENCES resume(id) ON DELETE SET NULL,
+    summary            TEXT,
+    strengths          TEXT         NOT NULL DEFAULT '[]',
+    weak_points        TEXT         NOT NULL DEFAULT '[]',
+    suggestions        TEXT         NOT NULL DEFAULT '[]',
+    key_topics         TEXT         NOT NULL DEFAULT '[]',
+    processing_status  VARCHAR(30)  NOT NULL,
+    vector_status      VARCHAR(30)  NOT NULL DEFAULT 'PENDING',
+    last_vector_error  VARCHAR(500),
+    created_at         TIMESTAMP    NOT NULL,
+    updated_at         TIMESTAMP    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS recording_review_question
+(
+    id                    BIGSERIAL PRIMARY KEY,
+    review_id             BIGINT       NOT NULL REFERENCES recording_review(id) ON DELETE CASCADE,
+    question_no           INT          NOT NULL,
+    question              TEXT,
+    question_type         VARCHAR(100),
+    knowledge_points      TEXT         NOT NULL DEFAULT '[]',
+    interviewer_follow_up TEXT,
+    candidate_answer      TEXT,
+    answer_summary        TEXT,
+    answer_strengths      TEXT         NOT NULL DEFAULT '[]',
+    missing_points        TEXT         NOT NULL DEFAULT '[]',
+    reference_answer      TEXT,
+    improved_answer       TEXT,
+    evidence              TEXT,
+    confidence            VARCHAR(30),
+    created_at            TIMESTAMP    NOT NULL,
+    CONSTRAINT uq_recording_review_question_no UNIQUE (review_id, question_no)
+);
+
+CREATE INDEX IF NOT EXISTS idx_recording_review_vector_status
+    ON recording_review (vector_status, updated_at);

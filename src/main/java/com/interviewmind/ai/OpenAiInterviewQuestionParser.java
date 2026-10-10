@@ -7,6 +7,8 @@ import com.interviewmind.rag.InterviewQuestionWeight;
 import com.interviewmind.rag.InterviewRagContext;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.openai.OpenAiChatModel.ResponseFormat;
+import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Service;
@@ -91,48 +93,73 @@ public class OpenAiInterviewQuestionParser implements InterviewQuestionAiParser 
 
     /**
      * 用户消息 = 简历原文（+ 可选 RAG 段）。
-     * 无历史权重时返回原始 rawText，保证第一轮出题行为与改造前完全一致。
-     * 拼装内容仅含：后端算好的知识点权重 + 历史记忆摘要（不打印、不外传其他数据）。
+     * 无历史权重且无检索命中时返回原始 rawText，保证首轮出题行为与改造前一致。
+     * 有检索命中时，将后端计算的权重和历史记忆摘要拼入用户消息。
      */
     private String buildUserMessage(String rawText, InterviewRagContext ragContext) {
-        if (ragContext == null || ragContext.weights().isEmpty()) {
+        if (ragContext == null || (ragContext.weights().isEmpty()
+                && ragContext.relevantMemories().isEmpty())) {
             return rawText;
         }
 
         StringBuilder sb = new StringBuilder(rawText);
-        sb.append("\n\n【动态出题权重】\n");
-        sb.append("（由后端根据你的历史面试表现计算，不得自行修改或重算）\n");
-        for (InterviewQuestionWeight weight : ragContext.weights()) {
-            sb.append(weight.knowledgePoint()).append(": ")
-                    .append(String.format("%.1f", weight.weight())).append('\n');
+        if (!ragContext.weights().isEmpty()) {
+            sb.append("\n\n【动态出题权重】\n");
+            sb.append("（由后端根据历史表现计算，不得自行修改或重算）\n");
+            for (InterviewQuestionWeight weight : ragContext.weights()) {
+                sb.append(weight.knowledgePoint()).append(": ")
+                        .append(String.format("%.1f", weight.weight())).append('\n');
+            }
+
+            sb.append("\n【按知识点聚合的历史经验】\n");
+            Map<String, List<InterviewMemory>> memoriesByKnowledgePoint =
+                    ragContext.relevantMemories().stream()
+                            .filter(memory -> memory.knowledgePoint() != null
+                                    && !memory.knowledgePoint().isBlank())
+                            .collect(Collectors.groupingBy(
+                                    InterviewMemory::knowledgePoint,
+                                    LinkedHashMap::new,
+                                    Collectors.toList()));
+            for (InterviewQuestionWeight weight : ragContext.weights()) {
+                List<InterviewMemory> group = memoriesByKnowledgePoint
+                        .getOrDefault(weight.knowledgePoint(), List.of());
+                sb.append(weight.knowledgePoint())
+                        .append("（历史平均分 ").append(String.format("%.1f", weight.averageScore()))
+                        .append("，记忆 ").append(weight.memoryCount())
+                        .append(" 条，薄弱 ").append(weight.weakPointCount()).append(" 条）：\n");
+                group.stream().limit(MAX_EXPERIENCE_LINES).forEach(memory ->
+                        sb.append("- ").append(truncate(memory.content(), MAX_EXPERIENCE_CHARS))
+                                .append('\n'));
+            }
         }
 
-        sb.append("\n【历史经验】\n");
-        Map<String, List<InterviewMemory>> memoriesByKnowledgePoint =
-                ragContext.relevantMemories().stream()
-                        .filter(memory -> memory.knowledgePoint() != null
-                                && !memory.knowledgePoint().isBlank())
-                        .collect(Collectors.groupingBy(
-                                InterviewMemory::knowledgePoint,
-                                LinkedHashMap::new,
-                                Collectors.toList()));
-        for (InterviewQuestionWeight weight : ragContext.weights()) {
-            List<InterviewMemory> group = memoriesByKnowledgePoint
-                    .getOrDefault(weight.knowledgePoint(), List.of());
-            sb.append(weight.knowledgePoint())
-                    .append("（历史平均分 ").append(String.format("%.1f", weight.averageScore()))
-                    .append("，记忆 ").append(weight.memoryCount())
-                    .append(" 条，薄弱 ").append(weight.weakPointCount()).append(" 条）：\n");
-            group.stream().limit(MAX_EXPERIENCE_LINES).forEach(memory ->
-                    sb.append("- ").append(truncate(memory.content(), MAX_EXPERIENCE_CHARS))
-                            .append('\n'));
-        }
+        // 录音复盘也会进入相关记忆；即使没有可聚合的知识点，也要把命中内容交给模型。
+        sb.append("\n【RAG 检索到的个人历史复盘】\n");
+        ragContext.relevantMemories().stream().limit(12).forEach(memory -> {
+            sb.append("- 类型：").append(memory.memoryType());
+            if (memory.knowledgePoint() != null && !memory.knowledgePoint().isBlank()) {
+                sb.append("；知识点：").append(memory.knowledgePoint());
+            }
+            if (memory.score() != null) sb.append("；历史评分：").append(memory.score());
+            sb.append("\n  ").append(truncate(memory.content(), 220)).append('\n');
+        });
+        sb.append("请把这些历史经验用于识别薄弱点、调整考察重点和追问深度；不得复制旧题，且不得捏造简历未支持的经历。\n");
         return sb.toString();
+    }
+
+    /** 仅为题目生成请求启用 JSON mode，不改变其他 ChatClient 调用的默认配置。 */
+    static OpenAiChatOptions.Builder jsonModeOptions() {
+        return OpenAiChatOptions.builder()
+                .responseFormat(ResponseFormat.builder()
+                        .type(ResponseFormat.Type.JSON_OBJECT)
+                        .build());
     }
 
     private InterviewQuestionAiResult callModel(String rawText, InterviewRagContext ragContext) {
         try {
             InterviewQuestionAiResult result = chatClient.prompt()
+                    // 仅对题目生成请求启用 JSON mode，避免改变其他 ChatClient 调用的全局行为。
+                    .options(jsonModeOptions())
                     .user(buildUserMessage(rawText, ragContext))
                     .call()
                     .entity(InterviewQuestionAiResult.class);

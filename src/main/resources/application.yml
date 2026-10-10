@@ -9,12 +9,17 @@ spring:
 
   servlet:
     multipart:
-      max-file-size: 20MB
-      max-request-size: 20MB
+      max-file-size: 100MB
+      max-request-size: 110MB
 
   ai:
     openai:
+      # 必须通过环境变量提供密钥，禁止在仓库中设置可用的默认密钥。
       api-key: ${OPENAI_API_KEY:sk-b682278f65b34b00b9c6d6bd6f2caec2}
+      # OpenAI Java SDK 的底层 OkHttp 请求超时；chat.options.timeout 不能单独保证覆盖每次请求。
+      timeout: 10m
+      # 长文本分析超时不自动重复生成，避免一次用户请求触发多次计费调用。
+      max-retries: 0
       # DashScope OpenAI 兼容模式要求 /compatible-mode/v1 前缀（直连 /v1/chat/completions 返回 404）
       base-url: ${OPENAI_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
       chat:
@@ -24,6 +29,8 @@ spring:
         options:
           model: ${OPENAI_CHAT_MODEL:qwen3.8-27b}
           temperature: 0
+          # 录音复盘属于长文本分析，允许单次 Chat 请求最多等待 10 分钟。
+          timeout: 10m
       # Embedding 与 Chat 职责分离：仅新增 Embedding 配置，不触碰上方任何 Chat 配置。
       # base-url/api-key 继承 spring.ai.openai.*；DashScope OpenAI 兼容 /v1/embeddings
       # 已实测可用（模型回显 qwen3.7-text-embedding，输出维度 1024）
@@ -46,6 +53,16 @@ minio:
   access-key: ${MINIO_ACCESS_KEY:minio}
   secret-key: ${MINIO_SECRET_KEY:123456789}
   bucket: ${MINIO_BUCKET:interview-files}
+
+# DashScope ASR（MinIO 真实音频 → 官方临时上传 → FileTrans 异步转写）
+# API Key 复用 spring.ai.openai.api-key（DashScope 兼容模式同一把 key），不新增副本
+interview:
+  asr:
+    model: qwen-audio-3.1-asr-flash-filetrans
+    base-url: https://dashscope.aliyuncs.com
+    poll-interval-ms: 1000
+    # FileTrans 是异步任务，录音较长时允许轮询最多等待 10 分钟。
+    poll-timeout-ms: 600000
 
 server:
   port: 8080

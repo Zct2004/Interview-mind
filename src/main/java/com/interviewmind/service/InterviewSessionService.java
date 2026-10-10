@@ -283,8 +283,11 @@ public class InterviewSessionService {
                 session.getFinishedAt(),
                 evaluations.stream()
                         .map(e -> new InterviewQuestionEvaluationResponse(
-                                e.questionNo(), e.score(), e.analysis(),
-                                e.weakPoints(), e.suggestions()))
+                                e.questionNo(),
+                                questions.get(e.questionNo() - 1).getQuestion(),
+                                answers.get(questions.get(e.questionNo() - 1).getId()).getAnswerText(),
+                                questions.get(e.questionNo() - 1).getReferenceAnswer(),
+                                e.score(), e.analysis(), e.weakPoints(), e.suggestions()))
                         .toList());
         return new InterviewFinishResponse(sessionId, session.getStatus(), reportResponse);
     }

@@ -23,10 +23,7 @@ import java.util.List;
 @RequiredArgsConstructor
 public class InterviewMemoryRetriever {
 
-    /**
-     * 第一版固定查询语义：与当前候选人技术栈相关的宽泛描述，
-     * 一次 similaritySearch 取回 topK 后完全在 Java 内存中聚合。
-     */
+    /** 默认查询语义：供兼容调用与测试使用。 */
     static final String RETRIEVAL_QUERY = "Java Spring MySQL Redis MQ 项目技术能力 面试表现 薄弱点";
 
     /** 第一版检索条数上限 */
@@ -40,8 +37,17 @@ public class InterviewMemoryRetriever {
      * @return 命中的历史记忆；无历史时为空列表（不是异常）
      */
     public List<InterviewMemory> retrieve(Long resumeId) {
+        return retrieve(resumeId, RETRIEVAL_QUERY);
+    }
+
+    /** 使用当前简历的技能/项目摘要作为查询语义，但不把姓名、电话、邮箱等个人信息送去 Embedding。 */
+    public List<InterviewMemory> retrieve(Long resumeId, String resumeContext) {
+        String context = resumeContext == null ? "" : resumeContext.trim();
+        if (context.length() > 1200) context = context.substring(0, 1200);
+        String query = context.isBlank() ? RETRIEVAL_QUERY
+                : "当前简历技术栈与项目经历：\n" + context + "\n重点检索历史面试表现、薄弱点、优秀回答和改进建议";
         List<InterviewMemory> memories =
-                interviewMemoryStore.search(RETRIEVAL_QUERY, resumeId, TOP_K);
+                interviewMemoryStore.search(query, resumeId, TOP_K);
         List<InterviewMemory> result = memories == null ? List.of() : memories;
         log.info("RAG retrieval: resumeId={}, topK={}, retrievedCount={}",
                 resumeId, TOP_K, result.size());

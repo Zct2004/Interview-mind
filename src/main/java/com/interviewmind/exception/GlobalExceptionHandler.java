@@ -1,6 +1,7 @@
 package com.interviewmind.exception;
 
 import com.interviewmind.common.ApiResponse;
+import com.interviewmind.asr.AsrException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -42,6 +43,14 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleMaxUploadSize(MaxUploadSizeExceededException e) {
         return ResponseEntity.status(413)
                 .body(ApiResponse.error(413, "文件大小超过限制，最大 20MB"));
+    }
+    @ExceptionHandler(AsrException.class)
+    public ResponseEntity<ApiResponse<Void>> handleAsrException(AsrException e) {
+        // 只向客户端暴露稳定的阶段码，不回传远端响应正文、凭证或异常消息。
+        log.error("ASR 转写失败 code={} taskId={} remoteCode={}",
+                e.getCode(), e.getTaskId(), e.getRemoteCode(), e);
+        return ResponseEntity.status(502)
+                .body(ApiResponse.error(502, "ASR 转写失败，阶段=" + e.getCode().name()));
     }
 
     @ExceptionHandler(Exception.class)

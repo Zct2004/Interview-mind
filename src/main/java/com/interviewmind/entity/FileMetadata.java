@@ -32,6 +32,9 @@ public class FileMetadata {
     @TableField("file_size")
     private Long fileSize;
 
+    @TableField("content_sha256")
+    private String contentSha256;
+
     @TableField("created_at")
     private LocalDateTime createdAt;
 
