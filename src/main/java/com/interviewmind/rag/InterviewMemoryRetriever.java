@@ -32,7 +32,7 @@ public class InterviewMemoryRetriever {
     private final InterviewMemoryStore interviewMemoryStore;
 
     /**
-     * 检索当前简历的历史记忆（metadata filter 限定 resumeId）。
+     * 检索统一个人 RAG 的历史记忆，不按简历 resumeId 过滤。
      *
      * @return 命中的历史记忆；无历史时为空列表（不是异常）
      */
@@ -47,10 +47,9 @@ public class InterviewMemoryRetriever {
         String query = context.isBlank() ? RETRIEVAL_QUERY
                 : "当前简历技术栈与项目经历：\n" + context + "\n重点检索历史面试表现、薄弱点、优秀回答和改进建议";
         List<InterviewMemory> memories =
-                interviewMemoryStore.search(query, resumeId, TOP_K);
+                interviewMemoryStore.search(query, null, TOP_K);
         List<InterviewMemory> result = memories == null ? List.of() : memories;
-        log.info("RAG retrieval: resumeId={}, topK={}, retrievedCount={}",
-                resumeId, TOP_K, result.size());
+        log.info("统一 RAG retrieval: topK={}, retrievedCount={}", TOP_K, result.size());
         return result;
     }
 

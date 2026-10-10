@@ -188,7 +188,7 @@ public class InterviewSessionService {
      * 短事务补充 20 个回答的评分、写入报告、置为 COMPLETED。
      * 对已完成会话返回 409（幂等语义由前端根据 409 + 报告查询自行处理）。
      */
-    public InterviewFinishResponse finish(Long sessionId) {
+    public synchronized InterviewFinishResponse finish(Long sessionId) {
         InterviewSession session = requireSession(sessionId);
         if (InterviewSession.STATUS_COMPLETED.equals(session.getStatus())) {
             throw new BusinessException(409, "面试已完成，不可重复结束: " + sessionId);
@@ -290,6 +290,28 @@ public class InterviewSessionService {
                                 e.score(), e.analysis(), e.weakPoints(), e.suggestions()))
                         .toList());
         return new InterviewFinishResponse(sessionId, session.getStatus(), reportResponse);
+    }
+
+    /**
+     * 删除一轮已完成的模拟面试。先删除该轮 RAG 记忆，再在短事务内删除会话主记录；
+     * 题目、回答、报告由数据库外键级联删除。同步锁与 finish 共用，避免索引期间并发删除。
+     */
+    public synchronized void deleteSession(Long sessionId) {
+        InterviewSession session = requireSession(sessionId);
+        if (!InterviewSession.STATUS_COMPLETED.equals(session.getStatus())) {
+            throw new BusinessException(409, "只能删除已完成的模拟面试；正在进行或尚未完成的面试不会被删除");
+        }
+
+        // 先清理向量记忆；若 RAG 删除失败则保留数据库记录，避免知识库留下已删除内容。
+        interviewMemoryService.deleteMemories(sessionId);
+        transactionTemplate.execute(txStatus -> {
+            int deleted = sessionMapper.deleteById(sessionId);
+            if (deleted == 0) {
+                throw new BusinessException(404, "面试会话不存在: " + sessionId);
+            }
+            return null;
+        });
+        log.info("模拟面试及关联数据库/RAG 数据已删除: sessionId={}, resumeId={}", sessionId, session.getResumeId());
     }
 
     // ---------- 评价结果归一化 ----------

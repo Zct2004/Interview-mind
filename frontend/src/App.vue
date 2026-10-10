@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import {
+  ApiRequestError,
   formatDate,
   formatFileSize,
   interviewApi,
@@ -46,8 +47,10 @@ const isParsing = ref(false)
 const isStarting = ref(false)
 const isSubmitting = ref(false)
 const isFinishing = ref(false)
+const isDeletingInterview = ref(false)
 const errorMessage = ref('')
 const successMessage = ref('')
+const uploadRejectedMessage = ref('')
 const sessionId = ref<number | null>(null)
 const currentQuestion = ref<CurrentQuestion | null>(null)
 const answer = ref('')
@@ -67,6 +70,8 @@ const recordingReviewDetail = ref<RecordingReviewDetail | null>(null)
 const recordingResultSection = ref<HTMLElement | null>(null)
 const recordingLibrary = ref<RecordingLibraryItem[]>([])
 const isLoadingRecordingReviews = ref(false)
+const deletingObjectKey = ref<string | null>(null)
+const isDeletingRecording = computed(() => deletingObjectKey.value !== null)
 const allowedAudioExtensions = ['.m4a', '.mp3', '.wav', '.aac', '.flac', '.ogg', '.opus', '.webm', '.mp4']
 const maxAudioFileSize = 100 * 1024 * 1024
 
@@ -173,21 +178,9 @@ async function analyzeSavedRecording(objectKey: string) {
     recordingReviewDetail.value = await interviewApi.getRecordingReview(review.id)
     selectedRecordingFile.value = null
     uploadedRecording.value = null
-    if (
-      selectedResumeId.value !== null
-      && (recordingReviewDetail.value.review.resumeId === null || recordingReviewDetail.value.review.resumeId === selectedResumeId.value)
-      && recordingReviewDetail.value.review.vectorStatus !== 'INDEXED'
-    ) {
-      try {
-        const indexed = await interviewApi.indexRecordingReview(review.id, selectedResumeId.value)
-        recordingReviewDetail.value = { ...recordingReviewDetail.value, review: indexed }
-        successMessage.value = '复盘报告已保存，并已自动沉淀到当前简历的个人 RAG 经验库。'
-      } catch {
-        successMessage.value = '复盘报告已保存，但加入 RAG 失败。可在报告页面重试，或使用“同步全部录音经验”。'
-      }
-    } else {
-      successMessage.value = '复盘报告已保存。选择简历后，可将所有已完成的录音经验统一同步到 RAG。'
-    }
+    successMessage.value = recordingReviewDetail.value.review.vectorStatus === 'INDEXED'
+      ? '复盘报告已保存，并已自动加入统一 RAG。'
+      : '复盘报告已保存，但自动加入 RAG 未确认成功。可点击“重试加入 RAG”，或使用“同步全部录音经验”。'
     await loadRecordingReviews()
     await nextTick()
     recordingResultSection.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -232,13 +225,43 @@ async function uploadRecording() {
   try {
     uploadedRecording.value = await interviewApi.uploadRecording(selectedRecordingFile.value)
     await loadRecordingReviews()
-    successMessage.value = uploadedRecording.value.duplicate
-      ? '检测到相同音频，已复用历史文件，没有重复上传。'
-      : '录音上传成功，已加入历史录音资料库。可以开始 AI 复盘。'
+    const objectKey = uploadedRecording.value.objectKey
+    successMessage.value = '录音上传成功，正在自动执行转写、复盘并写入统一 RAG…'
+    isUploadingRecording.value = false
+    await analyzeSavedRecording(objectKey)
+  } catch (error) {
+    if (error instanceof ApiRequestError && error.status === 409) {
+      uploadRejectedMessage.value = error.message || '该录音已上传，请勿重复上传。'
+    } else {
+      showError(error)
+    }
+  } finally {
+    isUploadingRecording.value = false
+  }
+}
+
+async function deleteRecording(item: RecordingLibraryItem) {
+  if (deletingObjectKey.value !== null) return
+  const confirmed = window.confirm(
+    `确定删除录音“${item.originalName}”吗？\n\n此操作会删除 MinIO 原文件、复盘报告/题目以及该录音对应的 RAG 经验，且无法撤销。`,
+  )
+  if (!confirmed) return
+
+  clearMessages()
+  deletingObjectKey.value = item.objectKey
+  try {
+    await interviewApi.deleteRecording(item.objectKey)
+    recordingLibrary.value = recordingLibrary.value.filter((entry) => entry.objectKey !== item.objectKey)
+    if (recordingReviewDetail.value?.review.objectKey === item.objectKey) {
+      recordingReviewDetail.value = null
+    }
+    if (uploadedRecording.value?.objectKey === item.objectKey) uploadedRecording.value = null
+    successMessage.value = `录音“${item.originalName}”及其关联复盘数据已删除。`
+    await loadRecordingReviews()
   } catch (error) {
     showError(error)
   } finally {
-    isUploadingRecording.value = false
+    deletingObjectKey.value = null
   }
 }
 
@@ -247,37 +270,35 @@ async function analyzeRecording() {
   await analyzeSavedRecording(uploadedRecording.value.objectKey)
 }
 
-async function indexRecordingReview() {
+async function indexRecordingReview(reviewId?: number) {
   const detail = recordingReviewDetail.value
-  const resumeId = selectedResumeId.value
-  if (!detail || resumeId === null || isIndexingRecording.value) return
-  if (detail.review.resumeId !== null && detail.review.resumeId !== resumeId) {
-    errorMessage.value = '该录音复盘已关联其他简历，不能移动到不同的个人知识库。'
-    return
-  }
+  const targetId = reviewId ?? detail?.review.id
+  if (targetId === undefined || isIndexingRecording.value || isIndexingAllRecordings.value) return
   clearMessages()
   isIndexingRecording.value = true
   try {
-    const review = await interviewApi.indexRecordingReview(detail.review.id, resumeId)
-    recordingReviewDetail.value = { ...detail, review }
+    const review = await interviewApi.indexRecordingReview(targetId)
+    if (detail?.review.id === targetId) {
+      recordingReviewDetail.value = { ...detail, review }
+    }
     await loadRecordingReviews()
-    successMessage.value = '录音复盘已加入当前简历的个人 RAG 知识库；后续模拟面试出题会检索相关历史经验。'
+    successMessage.value = '录音复盘已加入统一 RAG；后续模拟面试会从所有录音经验中检索相关内容。'
   } catch (error) {
     showError(error)
+    await loadRecordingReviews()
   } finally {
     isIndexingRecording.value = false
   }
 }
 
 async function indexAllRecordingReviews() {
-  const resumeId = selectedResumeId.value
-  if (resumeId === null || isIndexingAllRecordings.value) return
+  if (isIndexingAllRecordings.value) return
   clearMessages()
   isIndexingAllRecordings.value = true
   try {
-    const result = await interviewApi.indexAllRecordingReviews(resumeId)
+    const result = await interviewApi.indexAllRecordingReviews()
     await loadRecordingReviews()
-    successMessage.value = `统一 RAG 同步完成：新增 ${result.indexed} 条录音经验，已有 ${result.alreadyIndexed} 条已是最新，失败 ${result.failed} 条，其他简历的录音跳过 ${result.skippedOtherResume} 条；另有 ${result.noReport} 个音频尚未生成复盘报告。`
+    successMessage.value = `统一 RAG 同步完成：本次补写 ${result.indexed} 条，向量库已存在 ${result.alreadyIndexed} 条，失败 ${result.failed} 条，尚未生成报告 ${result.noReport} 条。录音经验不再按简历归属过滤。若补写为 0 且已存在也为 0，请检查后端日志中的“录音 RAG 补齐失败”信息。`
   } catch (error) {
     showError(error)
   } finally {
@@ -435,6 +456,33 @@ function startNewRound() {
   backToSetup()
 }
 
+async function deleteCurrentInterview() {
+  const targetSessionId = report.value?.sessionId ?? sessionId.value
+  if (!targetSessionId || isDeletingInterview.value) return
+  const confirmed = window.confirm(
+    `确定删除第 ${targetSessionId} 轮模拟面试吗？\n\n将删除本轮数据库中的题目、回答、AI 报告，以及本轮专属的 RAG 记忆。不会删除简历、录音文件或其他轮次的经验。此操作无法撤销。`,
+  )
+  if (!confirmed) return
+
+  clearMessages()
+  isDeletingInterview.value = true
+  try {
+    await interviewApi.deleteInterviewSession(targetSessionId)
+    try {
+      const stored = JSON.parse(localStorage.getItem(ACTIVE_SESSION_KEY) ?? 'null') as StoredSession | null
+      if (stored?.sessionId === targetSessionId) localStorage.removeItem(ACTIVE_SESSION_KEY)
+    } catch {
+      localStorage.removeItem(ACTIVE_SESSION_KEY)
+    }
+    backToSetup()
+    successMessage.value = `第 ${targetSessionId} 轮模拟面试及其 RAG 记忆已删除。`
+  } catch (error) {
+    showError(error)
+  } finally {
+    isDeletingInterview.value = false
+  }
+}
+
 function typeLabel(type: string) {
   const labels: Record<string, string> = {
     TECHNICAL: '技术题',
@@ -483,6 +531,15 @@ onMounted(async () => {
 
 <template>
   <div class="app-shell">
+    <div v-if="uploadRejectedMessage" class="upload-rejection-backdrop" role="presentation" @click.self="uploadRejectedMessage = ''">
+      <section class="upload-rejection-dialog" role="alertdialog" aria-modal="true" aria-labelledby="upload-rejection-title" aria-describedby="upload-rejection-description">
+        <div class="upload-rejection-icon" aria-hidden="true">!</div>
+        <button class="upload-rejection-close" type="button" aria-label="关闭弹框" @click="uploadRejectedMessage = ''">×</button>
+        <h2 id="upload-rejection-title">录音上传被拒绝</h2>
+        <p id="upload-rejection-description">{{ uploadRejectedMessage }}</p>
+        <button class="button button-primary upload-rejection-confirm" type="button" @click="uploadRejectedMessage = ''">我知道了</button>
+      </section>
+    </div>
     <aside class="sidebar">
       <div class="brand">
         <div class="brand-mark">IM</div>
@@ -724,7 +781,7 @@ onMounted(async () => {
             <div class="panel-heading">
               <div><div class="panel-kicker">AUDIO LIBRARY</div><h2>历史录音资料库</h2><p>所有已完成的录音复盘可统一沉淀到同一份个人 RAG；刷新页面后仍可查看。</p></div>
               <div class="recording-library-actions">
-                <button class="button button-primary" :disabled="selectedResumeId === null || isIndexingAllRecordings" @click="indexAllRecordingReviews">
+                <button class="button button-primary" :disabled="isIndexingAllRecordings || isIndexingRecording" @click="indexAllRecordingReviews">
                   <span v-if="isIndexingAllRecordings" class="loading-spinner"></span>
                   {{ isIndexingAllRecordings ? '正在同步全部经验…' : '同步全部录音经验到 RAG' }}
                 </button>
@@ -739,13 +796,30 @@ onMounted(async () => {
                 <p>{{ item.fileSize !== null ? formatFileSize(item.fileSize) : '历史录音' }}<span v-if="item.uploadedAt"> · {{ formatDate(item.uploadedAt) }}</span></p>
                 <p>报告状态：{{ item.review ? (item.review.processingStatus === 'COMPLETED' ? '已生成报告' : '报告处理中/待重试') : '尚未生成报告' }}</p>
                 <p v-if="item.review?.summary" class="recording-library-summary">{{ item.review.summary }}</p>
-                <p v-if="item.review?.vectorStatus === 'INDEXED' && item.review.resumeId !== null" class="recording-library-rag-status">已加入简历 #{{ item.review.resumeId }} 的 RAG 知识库</p>
+                <p v-if="item.review?.vectorStatus === 'INDEXED'" class="recording-library-rag-status">已加入统一 RAG</p>
+                <p v-else-if="item.review?.processingStatus === 'COMPLETED'" class="recording-library-rag-status">RAG 状态：{{ item.review.vectorStatus === 'FAILED' ? '加入失败，可重试' : '尚未加入，可重试' }}</p>
               </div>
               <div class="recording-library-actions">
-                <button v-if="item.review" class="button button-secondary" @click="openSavedRecordingReview(item.review.id)">查看报告</button>
-                <button v-else class="button button-primary" :disabled="isAnalyzingRecording" @click="analyzeSavedRecording(item.objectKey)">
+                <button v-if="item.review" class="button button-secondary" :disabled="isDeletingRecording" @click="openSavedRecordingReview(item.review.id)">查看报告</button>
+                <button
+                  v-if="item.review && item.review.processingStatus === 'COMPLETED' && item.review.vectorStatus !== 'INDEXED'"
+                  class="button button-primary"
+                  :disabled="isIndexingRecording || isIndexingAllRecordings || isDeletingRecording"
+                  @click="indexRecordingReview(item.review.id)"
+                >
+                  <span v-if="isIndexingRecording" class="loading-spinner"></span>
+                  {{ isIndexingRecording ? '正在加入 RAG…' : item.review.vectorStatus === 'FAILED' ? '重试加入 RAG' : '加入 RAG' }}
+                </button>
+                <button v-else class="button button-primary" :disabled="isAnalyzingRecording || isDeletingRecording" @click="analyzeSavedRecording(item.objectKey)">
                   <span v-if="analyzingObjectKey === item.objectKey" class="loading-spinner"></span>
                   {{ analyzingObjectKey === item.objectKey ? '正在分析…' : '生成报告' }}
+                </button>
+                <button
+                  class="button button-secondary recording-delete-button"
+                  :disabled="isDeletingRecording || isAnalyzingRecording || isIndexingRecording || isIndexingAllRecordings"
+                  @click="deleteRecording(item)"
+                >
+                  {{ deletingObjectKey === item.objectKey ? '正在删除…' : '删除录音' }}
                 </button>
               </div>
             </article>
@@ -757,26 +831,14 @@ onMounted(async () => {
               <h2>本次录音复盘</h2>
               <p class="recording-summary-text">{{ recordingReviewDetail.review.summary || '暂无总结。' }}</p>
               <div class="recording-rag-actions">
-                <p v-if="recordingReviewDetail.review.vectorStatus === 'INDEXED' && recordingReviewDetail.review.resumeId !== null" class="muted-copy">
-                  <strong>已加入个人 RAG 知识库</strong>
-                  <span v-if="recordingReviewDetail.review.resumeId"> · 关联简历 #{{ recordingReviewDetail.review.resumeId }}</span>
-                </p>
-                <template v-else>
-                  <p class="muted-copy">
-                    将这次复盘加入所选简历的个人知识库，之后生成模拟面试题时会参考这些历史回答与薄弱点。
-                    <span v-if="recordingReviewDetail.review.resumeId">当前已关联简历 #{{ recordingReviewDetail.review.resumeId }}。</span>
-                  </p>
-                  <button
-                    class="button button-primary"
-                    :disabled="selectedResumeId === null || isIndexingRecording || (recordingReviewDetail.review.resumeId !== null && recordingReviewDetail.review.resumeId !== selectedResumeId)"
-                    @click="indexRecordingReview"
-                  >
+                <p v-if="recordingReviewDetail.review.vectorStatus === 'INDEXED'" class="muted-copy"><strong>已加入统一 RAG 知识库</strong> · 模拟面试将检索所有录音经验，不按简历过滤。</p>
+                <div v-else class="recording-rag-actions">
+                  <p class="muted-copy">这条复盘尚未成功进入统一 RAG，可以重试。索引不依赖简历关联。</p>
+                  <button class="button button-primary" :disabled="isIndexingRecording || isIndexingAllRecordings" @click="indexRecordingReview()">
                     <span v-if="isIndexingRecording" class="loading-spinner"></span>
-                    {{ isIndexingRecording ? '正在建立向量索引…' : recordingReviewDetail.review.vectorStatus === 'FAILED' ? '重试加入个人知识库' : '加入个人 RAG 知识库' }}
+                    {{ isIndexingRecording ? '正在加入 RAG…' : recordingReviewDetail.review.vectorStatus === 'FAILED' ? '重试加入 RAG' : '加入 RAG' }}
                   </button>
-                  <p v-if="selectedResumeId === null" class="muted-copy">请先在“模拟面试”页面选择一份简历。</p>
-                  <p v-else-if="recordingReviewDetail.review.resumeId !== null && recordingReviewDetail.review.resumeId !== selectedResumeId" class="muted-copy">当前所选简历与该复盘已关联的简历不同，请切换回对应简历。</p>
-                </template>
+                </div>
               </div>
               <div class="recording-result-columns">
                 <div>
@@ -866,7 +928,7 @@ onMounted(async () => {
         </template>
 
         <template v-else-if="phase === 'report' && report">
-          <section class="report-heading"><div><div class="eyebrow"><span class="eyebrow-dot"></span> YOUR INTERVIEW REVIEW</div><h1>这次表现，值得认真复盘。</h1><p class="page-description">报告基于本轮实际回答生成，找出优势，也找到下一步的提升方向。</p></div><button class="button button-secondary" @click="startNewRound">再来一轮 ↗</button></section>
+          <section class="report-heading"><div><div class="eyebrow"><span class="eyebrow-dot"></span> YOUR INTERVIEW REVIEW</div><h1>这次表现，值得认真复盘。</h1><p class="page-description">报告基于本轮实际回答生成，找出优势，也找到下一步的提升方向。</p></div><div class="report-heading-actions"><button class="button button-quiet report-delete-button" :disabled="isDeletingInterview" @click="deleteCurrentInterview">{{ isDeletingInterview ? '删除中…' : '删除本轮记录' }}</button><button class="button button-secondary" @click="startNewRound">再来一轮 ↗</button></div></section>
           <section class="report-hero panel">
             <div class="report-score-wrap"><div class="score-caption">本轮综合评分</div><div class="score-ring"><div><strong>{{ report.totalScore ?? '—' }}</strong><span>综合得分</span></div></div><div class="score-foot">满分 100 分 · SESSION #{{ report.sessionId }}</div></div>
             <div class="report-summary"><div class="report-summary-label"><span class="summary-spark">✦</span> AI 面试总评</div><h2>{{ report.totalScore >= 85 ? '表现出色，继续保持。' : report.totalScore >= 70 ? '基础不错，还有提升空间。' : '找到差距，就是进步的开始。' }}</h2><p>{{ report.summary || '本轮评价已生成。你可以结合下方逐题反馈继续复盘。' }}</p><div class="report-date">完成时间 · {{ report.finishedAt ? new Date(report.finishedAt).toLocaleString('zh-CN') : '刚刚' }}</div></div>

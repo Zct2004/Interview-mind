@@ -14,7 +14,7 @@ import java.util.List;
  * InterviewMemoryStore 的确定性测试桩：
  * <ul>
  *   <li>saveAll：记录写入供断言，保证普通 mvn test 不产生任何真实 Embedding / PgVector 调用；</li>
- *   <li>search：模拟 RAG 读取（按 resumeId 过滤种子数据、记录调用次数与参数、可注入异常），
+ *   <li>search：模拟统一 RAG 读取（resumeId 为 null 时返回全部简历/录音经验），记录调用次数与参数、可注入异常，
  *       用于验证“单次检索（禁止 N+1）”与“检索失败回退”。</li>
  * </ul>
  * 由 InterviewSessionIntegrationTest、InterviewMemoryIntegrationTest、
@@ -59,9 +59,9 @@ public class FakeInterviewMemoryStoreConfig {
             if (searchFailure != null) {
                 throw searchFailure;
             }
-            // 模拟 Spring AI metadata filter：只返回当前简历的历史记忆
+            // 统一 RAG：调用方不传 resumeId 时返回所有来源的记忆。
             return searchable.stream()
-                    .filter(memory -> resumeId != null && resumeId.equals(memory.resumeId()))
+                    .filter(memory -> resumeId == null || resumeId.equals(memory.resumeId()))
                     .toList();
         }
 

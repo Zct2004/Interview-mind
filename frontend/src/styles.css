@@ -261,6 +261,8 @@ h1 { margin: 10px 0 8px; color: var(--ink); font-size: 28px; font-weight: 600; l
 .all-done p { margin: 0 0 20px; color: var(--ink-subtle); font-size: 11px; line-height: 1.9; }
 
 .report-heading { min-height: 95px; margin-bottom: 18px; }
+.report-heading-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 10px; }
+.report-delete-button { color: #ff9d9d !important; border-color: rgba(255, 125, 125, 0.35) !important; }
 .report-hero { display: grid; grid-template-columns: 190px minmax(0, 1fr); align-items: center; gap: 28px; padding: 25px; }
 .report-score-wrap { display: flex; flex-direction: column; align-items: center; padding-right: 24px; border-right: 1px solid var(--hairline); }
 .score-caption { margin-bottom: 12px; color: var(--ink-subtle); font-size: 10px; }
@@ -341,6 +343,18 @@ h1 { margin: 10px 0 8px; color: var(--ink); font-size: 28px; font-weight: 600; l
 .recording-question-body p strong { display: block; margin-bottom: 2px; color: #aeb5ff; font-size: 10px; font-weight: 500; }
 .recording-history-item { grid-template-columns: 30px minmax(0, 1fr) auto; align-items: center; gap: 13px; }
 .recording-library-actions { display: flex; align-items: center; justify-content: flex-end; gap: 7px; flex-wrap: wrap; }
+.recording-delete-button { color: #ff9d9d !important; border-color: rgba(255, 125, 125, 0.35) !important; }
+.recording-delete-button:hover:not(:disabled) { background: rgba(255, 125, 125, 0.1) !important; }
+.upload-rejection-backdrop { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 20px; background: rgba(0, 0, 0, .72); backdrop-filter: blur(5px); }
+.upload-rejection-dialog { position: relative; width: min(100%, 420px); padding: 28px; border: 1px solid var(--hairline-strong); border-radius: var(--radius-xl); background: var(--surface-1); box-shadow: 0 24px 80px rgba(0, 0, 0, .45); }
+.upload-rejection-icon { width: 42px; height: 42px; display: grid; place-items: center; margin-bottom: 18px; border: 1px solid rgba(223, 107, 117, .35); border-radius: 12px; background: rgba(223, 107, 117, .1); color: var(--danger); font-size: 22px; font-weight: 600; }
+.upload-rejection-close { position: absolute; top: 12px; right: 14px; width: 30px; height: 30px; border: 0; border-radius: 6px; background: transparent; color: var(--ink-subtle); font-size: 22px; }
+.upload-rejection-close:hover { background: var(--surface-3); color: var(--ink); }
+.upload-rejection-dialog h2 { margin: 0 0 10px; color: var(--ink); font-size: 17px; font-weight: 600; }
+.upload-rejection-dialog p { margin: 0; color: var(--ink-muted); font-size: 12px; line-height: 1.9; overflow-wrap: anywhere; white-space: pre-wrap; }
+.upload-rejection-confirm { width: 100%; margin-top: 24px; }
+@media (max-width: 480px) { .upload-rejection-dialog { padding: 22px; } }
+
 .recording-library-summary { display: -webkit-box; overflow: hidden; -webkit-line-clamp: 2; -webkit-box-orient: vertical; color: var(--ink-muted) !important; }
 .recording-library-rag-status { color: #8bd6a2 !important; }
 .recording-rag-actions { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 10px; margin-top: 16px; padding-top: 13px; border-top: 1px solid var(--hairline); }

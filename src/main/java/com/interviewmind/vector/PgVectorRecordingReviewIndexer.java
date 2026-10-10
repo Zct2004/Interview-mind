@@ -24,10 +24,21 @@ public class PgVectorRecordingReviewIndexer implements RecordingReviewVectorInde
     }
 
     @Override
+    public boolean exists(RecordingReview review) {
+        if (review == null || review.getId() == null) return false;
+        // 使用来源元数据限定查询，确认 pgvector 中确实存在这条录音复盘，而不是相信 PostgreSQL 业务表的旧状态。
+        List<Document> matches = vectorStore.similaritySearch(
+                org.springframework.ai.vectorstore.SearchRequest.builder()
+                        .query("录音复盘经验 " + review.getId())
+                        .topK(1)
+                        .similarityThresholdAll()
+                        .filterExpression("sourceType == 'RECORDING_REVIEW' && sourceId == " + review.getId())
+                        .build());
+        return matches != null && !matches.isEmpty();
+    }
+
+    @Override
     public void index(RecordingReview review, List<RecordingReviewQuestion> questions) {
-        if (review.getResumeId() == null) {
-            throw new IllegalArgumentException("录音复盘必须关联 resumeId 后才能进入个人 RAG 知识库");
-        }
         List<Document> documents = new ArrayList<>();
         String summary = join(
                 review.getSummary(),
@@ -61,6 +72,27 @@ public class PgVectorRecordingReviewIndexer implements RecordingReviewVectorInde
         }
     }
 
+    @Override
+    public void delete(RecordingReview review, List<RecordingReviewQuestion> questions) {
+        if (review == null || review.getId() == null) return;
+        List<String> ids = new ArrayList<>();
+        ids.add(documentId(review.getId(), "summary", null));
+        if (questions != null) {
+            for (RecordingReviewQuestion question : questions) {
+                if (question.getQuestionNo() != null) {
+                    ids.add(documentId(review.getId(), "question", question.getQuestionNo()));
+                }
+            }
+        }
+        vectorStore.delete(ids);
+    }
+
+    private static String documentId(Long reviewId, String kind, Integer questionNo) {
+        String stableKey = "recording-review:" + reviewId + ":" + kind + ":" +
+                (questionNo == null ? "summary" : questionNo);
+        return UUID.nameUUIDFromBytes(stableKey.getBytes(StandardCharsets.UTF_8)).toString();
+    }
+
     private static void addDocument(List<Document> documents, RecordingReview review, String kind,
                                     String content, Integer questionNo, String memoryType) {
         addDocument(documents, review, kind, content, questionNo, memoryType, null);
@@ -71,15 +103,16 @@ public class PgVectorRecordingReviewIndexer implements RecordingReviewVectorInde
                                     String knowledgePoint) {
         if (content == null || content.isBlank()) return;
         Long reviewId = review.getId();
-        String stableKey = "recording-review:" + reviewId + ":" + kind + ":" +
-                (questionNo == null ? "summary" : questionNo);
-        String id = UUID.nameUUIDFromBytes(stableKey.getBytes(StandardCharsets.UTF_8)).toString();
+        String id = documentId(reviewId, kind, questionNo);
         Map<String, Object> metadata = new HashMap<>();
         metadata.put("sourceType", "RECORDING_REVIEW");
         metadata.put("sourceId", reviewId);
-        metadata.put("objectKey", review.getObjectKey());
+        if (review.getObjectKey() != null && !review.getObjectKey().isBlank()) {
+            metadata.put("objectKey", review.getObjectKey());
+        }
         metadata.put("documentType", kind);
-        metadata.put("resumeId", review.getResumeId());
+        // 简历关联是可选的：统一 RAG 中的录音经验不依赖 resumeId。
+        if (review.getResumeId() != null) metadata.put("resumeId", review.getResumeId());
         metadata.put("memoryType", memoryType);
         if (knowledgePoint != null && !knowledgePoint.isBlank()) metadata.put("knowledgePoint", knowledgePoint);
         if (questionNo != null) metadata.put("questionNo", questionNo);

@@ -23,6 +23,11 @@ public class InterviewMemoryService {
     private final InterviewMemoryBuilder interviewMemoryBuilder;
     private final InterviewMemoryStore interviewMemoryStore;
 
+    /** 删除指定模拟面试会话对应的 RAG 记忆。删除失败时向上抛出，阻止数据库先行删除。 */
+    public void deleteMemories(Long sessionId) {
+        interviewMemoryStore.deleteBySessionId(sessionId);
+    }
+
     /**
      * 为一场已完成的面试构建并索引 Interview Memory。
      *

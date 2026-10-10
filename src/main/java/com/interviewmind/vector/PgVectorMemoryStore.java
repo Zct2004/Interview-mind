@@ -31,6 +31,18 @@ public class PgVectorMemoryStore implements InterviewMemoryStore {
     private final VectorStore vectorStore;
 
     @Override
+    public void deleteBySessionId(Long sessionId) {
+        if (sessionId == null) {
+            throw new IllegalArgumentException("sessionId 不能为空");
+        }
+        // 仅删除 metadata 中 sessionId 精确匹配的模拟面试记忆；录音复盘记忆不含此字段。
+        vectorStore.delete(new org.springframework.ai.vectorstore.filter.FilterExpressionBuilder()
+                .eq("sessionId", sessionId)
+                .build());
+        log.info("PGVector 模拟面试记忆删除完成: sessionId={}", sessionId);
+    }
+
+    @Override
     public void saveAll(List<InterviewMemory> memories) {
         List<Document> documents = memories.stream().map(PgVectorMemoryStore::toDocument).toList();
         long startMillis = System.currentTimeMillis();
@@ -47,9 +59,7 @@ public class PgVectorMemoryStore implements InterviewMemoryStore {
                 .topK(topK)
                 // 接受全部相似度：范围已由 metadata filter 限定，不用相似度阈值再裁剪
                 .similarityThresholdAll()
-                // Spring AI 官方 metadata filter（编译为 metadata::jsonb @@ jsonpath，
-                // 非手写向量 SQL）：只取当前简历的历史记忆
-                .filterExpression("resumeId == " + resumeId)
+                // 统一个人 RAG：resumeId 为 null 时不加简历过滤，录音经验与模拟面试经验共同参与检索。
                 .build();
         long startMillis = System.currentTimeMillis();
         List<Document> documents = vectorStore.similaritySearch(request);
@@ -57,7 +67,7 @@ public class PgVectorMemoryStore implements InterviewMemoryStore {
                 .map(PgVectorMemoryStore::fromDocument)
                 .filter(Objects::nonNull)
                 .toList();
-        log.info("PGVector 检索完成: resumeId={}, count={}, cost={}ms", resumeId,
+        log.info("PGVector 统一 RAG 检索完成: count={}, cost={}ms",
                 memories.size(), System.currentTimeMillis() - startMillis);
         return memories;
     }
@@ -70,7 +80,7 @@ public class PgVectorMemoryStore implements InterviewMemoryStore {
         String memoryType = asText(metadata.get("memoryType"));
         String content = document.getText();
         // 录音复盘记忆没有模拟面试 sessionId；resumeId 才是个人知识库隔离边界。
-        if (resumeId == null || memoryType == null || content == null) {
+        if (memoryType == null || content == null) {
             return null;
         }
         MemoryType type;

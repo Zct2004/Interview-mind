@@ -122,6 +122,13 @@ export interface FinishInterviewResponse {
   report: InterviewReport
 }
 
+export class ApiRequestError extends Error {
+  constructor(message: string, public readonly status: number) {
+    super(message)
+    this.name = 'ApiRequestError'
+  }
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   let response: Response
   try {
@@ -139,7 +146,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const contentType = response.headers.get('content-type') || ''
   const body = contentType.includes('application/json') ? await response.json() : null
   if (!response.ok) {
-    throw new Error(body?.message || `请求失败（HTTP ${response.status}）`)
+    throw new ApiRequestError(body?.message || `请求失败（HTTP ${response.status}）`, response.status)
   }
   if (body && typeof body.code === 'number') {
     if (body.code !== 200) throw new Error(body.message || '请求失败')
@@ -185,6 +192,11 @@ export const interviewApi = {
     })
   },
 
+  deleteRecording(objectKey: string) {
+    const params = new URLSearchParams({ objectKey })
+    return request<void>(`/api/recording-reviews?${params.toString()}`, { method: 'DELETE' })
+  },
+
   getRecordingReview(reviewId: number) {
     return request<RecordingReviewDetail>(`/api/recording-reviews/${reviewId}`)
   },
@@ -193,17 +205,15 @@ export const interviewApi = {
     return request<RecordingLibraryItem[]>('/api/recording-reviews')
   },
 
-  indexRecordingReview(reviewId: number, resumeId: number) {
-    const params = new URLSearchParams({ resumeId: String(resumeId) })
-    return request<RecordingReview>(`/api/recording-reviews/${reviewId}/index?${params.toString()}`, {
+  indexRecordingReview(reviewId: number) {
+    return request<RecordingReview>(`/api/recording-reviews/${reviewId}/index`, {
       method: 'POST',
     })
   },
 
-  indexAllRecordingReviews(resumeId: number) {
-    const params = new URLSearchParams({ resumeId: String(resumeId) })
-    return request<{ resumeId: number; indexed: number; alreadyIndexed: number; skippedOtherResume: number; failed: number; noReport: number }>(
-      `/api/recording-reviews/index-all?${params.toString()}`,
+  indexAllRecordingReviews() {
+    return request<{ resumeId: number | null; indexed: number; alreadyIndexed: number; skippedOtherResume: number; failed: number; noReport: number }>(
+      '/api/recording-reviews/index-all',
       { method: 'POST' },
     )
   },
@@ -231,6 +241,10 @@ export const interviewApi = {
       method: 'POST',
     })
   },
+
+  deleteInterviewSession(sessionId: number) {
+    return request<void>(`/api/interviews/${sessionId}`, { method: 'DELETE' })
+  }
 }
 
 export function formatFileSize(bytes: number): string {

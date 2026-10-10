@@ -18,6 +18,29 @@ import static org.mockito.Mockito.verify;
 class PgVectorRecordingReviewIndexerTest {
 
     @Test
+    void allowsRecordingReviewWithoutResumeAssociationOrObjectKey() {
+        VectorStore vectorStore = mock(VectorStore.class);
+        PgVectorRecordingReviewIndexer indexer = new PgVectorRecordingReviewIndexer(vectorStore);
+
+        RecordingReview review = new RecordingReview();
+        review.setId(43L);
+        review.setResumeId(null);
+        review.setObjectKey(null);
+        review.setSummary("独立录音复盘应写入统一 RAG");
+
+        indexer.index(review, List.of());
+
+        var captor = org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(vectorStore).add(captor.capture());
+        @SuppressWarnings("unchecked")
+        List<Document> documents = (List<Document>) captor.getValue();
+        assertEquals(1, documents.size());
+        assertEquals(43L, ((Number) documents.get(0).getMetadata().get("sourceId")).longValue());
+        org.junit.jupiter.api.Assertions.assertFalse(documents.get(0).getMetadata().containsKey("resumeId"));
+        org.junit.jupiter.api.Assertions.assertFalse(documents.get(0).getMetadata().containsKey("objectKey"));
+    }
+
+    @Test
     void usesRecordingSourceMetadataAndStableDocumentIdsWithoutRealEmbedding() {
         VectorStore vectorStore = mock(VectorStore.class);
         PgVectorRecordingReviewIndexer indexer = new PgVectorRecordingReviewIndexer(vectorStore);
@@ -55,5 +78,8 @@ class PgVectorRecordingReviewIndexerTest {
         assertEquals(firstBatch.get(0).getId(), secondBatch.get(0).getId());
         assertEquals(firstBatch.get(1).getId(), secondBatch.get(1).getId());
         assertNotEquals(firstBatch.get(0).getId(), firstBatch.get(1).getId());
+
+        indexer.delete(review, List.of(question));
+        verify(vectorStore).delete(List.of(firstBatch.get(0).getId(), firstBatch.get(1).getId()));
     }
 }

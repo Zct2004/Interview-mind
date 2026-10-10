@@ -10,6 +10,7 @@ import com.interviewmind.dto.InterviewStartResponse;
 import com.interviewmind.service.InterviewSessionService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -48,6 +49,13 @@ public class InterviewSessionController {
     @PostMapping("/{sessionId}/finish")
     public ApiResponse<InterviewFinishResponse> finish(@PathVariable("sessionId") Long sessionId) {
         return ApiResponse.success(interviewSessionService.finish(sessionId));
+    }
+
+    /** 删除一轮已完成的模拟面试及其题目、回答、报告和 RAG 记忆。 */
+    @DeleteMapping("/{sessionId}")
+    public ApiResponse<Void> delete(@PathVariable("sessionId") Long sessionId) {
+        interviewSessionService.deleteSession(sessionId);
+        return ApiResponse.success(null);
     }
 
 }

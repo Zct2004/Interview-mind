@@ -41,17 +41,23 @@ public class RecordingReviewController {
         return ResponseEntity.ok(ApiResponse.success(reviewService.index(reviewId, resumeId)));
     }
 
-    /** 将当前简历所有已完成的录音复盘批量加入同一份个人 RAG 知识库。 */
+    /** 将所有已完成的录音复盘批量加入统一个人 RAG，不绑定简历。 */
     @PostMapping("/index-all")
-    public ResponseEntity<ApiResponse<RecordingReviewService.BulkIndexResult>> indexAll(
-            @RequestParam Long resumeId) {
-        return ResponseEntity.ok(ApiResponse.success(reviewService.indexAll(resumeId)));
+    public ResponseEntity<ApiResponse<RecordingReviewService.BulkIndexResult>> indexAll() {
+        return ResponseEntity.ok(ApiResponse.success(reviewService.indexAll()));
     }
 
     /** 列出历史复盘，方便重新打开已有记录并加入个人知识库，不需要重复执行 ASR/LLM。 */
     @GetMapping
     public ResponseEntity<ApiResponse<List<RecordingLibraryItem>>> list() {
         return ResponseEntity.ok(ApiResponse.success(reviewService.list()));
+    }
+
+    /** 删除录音及其报告、题目和对应的录音复盘 RAG 文档。 */
+    @DeleteMapping
+    public ResponseEntity<ApiResponse<Void>> delete(@RequestParam String objectKey) {
+        reviewService.deleteRecording(objectKey);
+        return ResponseEntity.ok(ApiResponse.success(null));
     }
 
     @GetMapping("/{reviewId}")

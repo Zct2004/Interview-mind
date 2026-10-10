@@ -7,6 +7,7 @@ import com.interviewmind.mapper.FileMetadataMapper;
 import com.interviewmind.storage.minio.ObjectStorageService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -16,6 +17,7 @@ import java.io.InputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
+import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
@@ -30,6 +32,7 @@ public class RecordingUploadService {
     private static final long MAX_FILE_SIZE = 100L * 1024 * 1024;
     private static final Set<String> ALLOWED_EXTENSIONS =
             Set.of(".m4a", ".mp3", ".wav", ".aac", ".flac", ".ogg", ".opus", ".webm", ".mp4");
+    private static final Object[] CONTENT_HASH_LOCKS = createHashLocks();
 
     private final ObjectStorageService objectStorageService;
     private final FileMetadataMapper fileMetadataMapper;
@@ -38,15 +41,21 @@ public class RecordingUploadService {
     @Transactional(rollbackFor = Exception.class)
     public RecordingUploadResponse upload(MultipartFile file) {
         validate(file);
-
         String originalName = file.getOriginalFilename().trim();
         String contentSha256 = sha256(file);
-        FileMetadata duplicate = findDuplicate(originalName, file.getSize(), contentSha256);
+        Object lock = CONTENT_HASH_LOCKS[Math.floorMod(contentSha256.hashCode(), CONTENT_HASH_LOCKS.length)];
+        synchronized (lock) {
+            return uploadUniqueContent(file, originalName, contentSha256);
+        }
+    }
+
+    private RecordingUploadResponse uploadUniqueContent(
+            MultipartFile file, String originalName, String contentSha256) {
+        FileMetadata duplicate = findDuplicate(file.getSize(), contentSha256);
         if (duplicate != null) {
-            log.info("检测到重复录音，复用已有对象: objectKey={}", duplicate.getObjectKey());
-            return new RecordingUploadResponse(
-                    duplicate.getObjectKey(), duplicate.getOriginalName(), duplicate.getFileSize(),
-                    duplicate.getContentType(), duplicate.getId(), true, duplicate.getCreatedAt());
+            log.info("拒绝重复录音上传: objectKey={}", duplicate.getObjectKey());
+            throw new BusinessException(409, "该录音内容已存在：" + duplicate.getOriginalName()
+                    + "（objectKey=" + duplicate.getObjectKey() + "）。未重复上传，也未触发 AI 分析；请在历史录音资料库中查看已有录音。");
         }
 
         String objectKey;
@@ -76,22 +85,32 @@ public class RecordingUploadService {
             } catch (RuntimeException cleanupError) {
                 log.error("录音元数据保存失败且 MinIO 清理失败，需人工核对: objectKey={}", objectKey, cleanupError);
             }
+            if (e instanceof DuplicateKeyException) {
+                throw new BusinessException(409, "该录音内容已被另一个上传请求登记，已拒绝重复保存；请刷新历史录音资料库。");
+            }
             throw e;
         }
     }
 
-    private FileMetadata findDuplicate(String originalName, long fileSize, String contentSha256) {
+    private static Object[] createHashLocks() {
+        Object[] locks = new Object[256];
+        Arrays.setAll(locks, ignored -> new Object());
+        return locks;
+    }
+
+    private FileMetadata findDuplicate(long fileSize, String contentSha256) {
         FileMetadata exact = fileMetadataMapper.selectOne(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<FileMetadata>()
                 .eq(FileMetadata::getContentSha256, contentSha256)
                 .last("LIMIT 1"));
         if (exact != null) return exact;
 
-        // 兼容旧数据：只对同名同大小文件回查 MinIO 并计算哈希，不扫描/下载整个桶。
+        // 兼容尚未回填哈希的历史录音：只核验同大小候选对象；相同内容必然同大小，
+        // 因此也能识别改过文件名的重复录音，而不扫描/下载整个 bucket。
         List<FileMetadata> candidates = fileMetadataMapper.selectList(
                 new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<FileMetadata>()
-                        .eq(FileMetadata::getOriginalName, originalName)
                         .eq(FileMetadata::getFileSize, fileSize));
         for (FileMetadata candidate : candidates) {
+            if (!isAudioFile(candidate.getOriginalName()) && !isAudioFile(candidate.getObjectKey())) continue;
             if (candidate.getContentSha256() != null) continue;
             try (InputStream existing = objectStorageService.download(candidate.getObjectKey())) {
                 String existingHash = sha256(existing);
@@ -126,6 +145,12 @@ public class RecordingUploadService {
         } catch (IOException e) {
             throw new BusinessException(400, "读取录音文件失败，请重新选择文件");
         }
+    }
+
+    private boolean isAudioFile(String name) {
+        if (name == null) return false;
+        String lower = name.toLowerCase(Locale.ROOT);
+        return ALLOWED_EXTENSIONS.stream().anyMatch(lower::endsWith);
     }
 
     private void validate(MultipartFile file) {
