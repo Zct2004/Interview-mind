@@ -122,6 +122,18 @@ export interface FinishInterviewResponse {
   report: InterviewReport
 }
 
+export interface InterviewHistoryItem {
+  sessionId: number
+  resumeId: number | null
+  resumeName: string | null
+  status: string
+  totalQuestions: number
+  totalScore: number | null
+  summary: string | null
+  startedAt: string | null
+  finishedAt: string | null
+}
+
 export class ApiRequestError extends Error {
   constructor(message: string, public readonly status: number) {
     super(message)
@@ -240,6 +252,14 @@ export const interviewApi = {
     return request<FinishInterviewResponse>(`/api/interviews/${sessionId}/finish`, {
       method: 'POST',
     })
+  },
+
+  listInterviewHistory() {
+    return request<InterviewHistoryItem[]>('/api/interviews/history')
+  },
+
+  getInterviewReport(sessionId: number) {
+    return request<InterviewReport>(`/api/interviews/${sessionId}/report`)
   },
 
   deleteInterviewSession(sessionId: number) {

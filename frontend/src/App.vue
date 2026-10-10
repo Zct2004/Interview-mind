@@ -7,6 +7,7 @@ import {
   interviewApi,
   type CurrentQuestion,
   type InterviewReport,
+  type InterviewHistoryItem,
   type RecordingReview,
   type RecordingReviewDetail,
   type RecordingLibraryItem,
@@ -55,6 +56,9 @@ const sessionId = ref<number | null>(null)
 const currentQuestion = ref<CurrentQuestion | null>(null)
 const answer = ref('')
 const report = ref<InterviewReport | null>(null)
+const interviewHistory = ref<InterviewHistoryItem[]>([])
+const isLoadingInterviewHistory = ref(false)
+const isLoadingHistoricalReport = ref(false)
 const answersCount = ref(0)
 const activeNav = ref('模拟面试')
 const recordingInput = ref<HTMLInputElement | null>(null)
@@ -95,6 +99,26 @@ function clearMessages() {
 
 function showError(error: unknown) {
   errorMessage.value = error instanceof Error ? error.message : '操作失败，请稍后重试。'
+}
+
+async function loadInterviewHistory() {
+  isLoadingInterviewHistory.value = true
+  try { interviewHistory.value = await interviewApi.listInterviewHistory() }
+  catch (error) { showError(error) }
+  finally { isLoadingInterviewHistory.value = false }
+}
+
+async function openHistoricalReport(item: InterviewHistoryItem) {
+  if (item.status !== 'COMPLETED' || isLoadingHistoricalReport.value) return
+  clearMessages()
+  isLoadingHistoricalReport.value = true
+  try {
+    report.value = await interviewApi.getInterviewReport(item.sessionId)
+    sessionId.value = item.sessionId
+    phase.value = 'report'
+    activeNav.value = '模拟面试'
+  } catch (error) { showError(error) }
+  finally { isLoadingHistoricalReport.value = false }
 }
 
 async function loadResumes() {
@@ -419,6 +443,7 @@ async function finishInterview() {
     report.value = result.report
     localStorage.removeItem(ACTIVE_SESSION_KEY)
     phase.value = 'report'
+    await loadInterviewHistory()
   } catch (error) {
     showError(error)
   } finally {
@@ -468,6 +493,7 @@ async function deleteCurrentInterview() {
   isDeletingInterview.value = true
   try {
     await interviewApi.deleteInterviewSession(targetSessionId)
+    await loadInterviewHistory()
     try {
       const stored = JSON.parse(localStorage.getItem(ACTIVE_SESSION_KEY) ?? 'null') as StoredSession | null
       if (stored?.sessionId === targetSessionId) localStorage.removeItem(ACTIVE_SESSION_KEY)
@@ -524,7 +550,7 @@ async function restoreActiveSession() {
 }
 
 onMounted(async () => {
-  await Promise.all([loadResumes(), loadRecordingReviews()])
+  await Promise.all([loadResumes(), loadRecordingReviews(), loadInterviewHistory()])
   await restoreActiveSession()
 })
 </script>
@@ -608,6 +634,14 @@ onMounted(async () => {
         </div>
 
         <template v-if="phase === 'setup'">
+          <section class="panel interview-history-panel">
+            <div class="panel-heading"><div><div class="panel-kicker">INTERVIEW HISTORY</div><h2>历史模拟面试报告</h2><p>历史记录保存在数据库中，刷新或重新打开页面后仍可查询。</p></div><button class="text-button" :disabled="isLoadingInterviewHistory" @click="loadInterviewHistory">{{ isLoadingInterviewHistory ? '刷新中…' : '刷新历史 ↻' }}</button></div>
+            <div v-if="!interviewHistory.length && !isLoadingInterviewHistory" class="empty-state">暂无模拟面试记录。完成一轮模拟面试后，报告会自动出现在这里。</div>
+            <article v-for="item in interviewHistory" :key="item.sessionId" class="recording-question recording-history-item">
+              <div class="recording-question-number">{{ item.totalScore ?? '—' }}</div><div class="recording-question-body"><h3>第 {{ item.sessionId }} 轮模拟面试 <span class="history-status">{{ item.status === 'COMPLETED' ? '已完成' : item.status === 'IN_PROGRESS' ? '进行中' : item.status }}</span></h3><p>{{ item.resumeName || '简历信息不可用' }} · {{ item.finishedAt ? new Date(item.finishedAt).toLocaleString('zh-CN') : item.startedAt ? new Date(item.startedAt).toLocaleString('zh-CN') : '时间未知' }}</p><p v-if="item.summary" class="recording-library-summary">{{ item.summary }}</p><p v-else-if="item.status !== 'COMPLETED'" class="muted-copy">本轮尚未生成最终报告。</p></div>
+              <div class="recording-library-actions"><button class="button button-secondary" :disabled="item.status !== 'COMPLETED' || isLoadingHistoricalReport" @click="openHistoricalReport(item)">{{ isLoadingHistoricalReport ? '加载中…' : '查看历史报告' }}</button></div>
+            </article>
+          </section>
           <section class="page-heading">
             <div>
               <div class="eyebrow"><span class="eyebrow-dot"></span> YOUR NEXT CAREER MOVE</div>

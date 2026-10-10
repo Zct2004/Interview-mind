@@ -28,6 +28,16 @@ public class InterviewSessionController {
 
     private final InterviewSessionService interviewSessionService;
 
+    @GetMapping("/history")
+    public ApiResponse<java.util.List<com.interviewmind.dto.InterviewHistoryItemResponse>> history() {
+        return ApiResponse.success(interviewSessionService.listHistory());
+    }
+
+    @GetMapping("/{sessionId}/report")
+    public ApiResponse<com.interviewmind.dto.InterviewReportResponse> report(@PathVariable("sessionId") Long sessionId) {
+        return ApiResponse.success(interviewSessionService.getReport(sessionId));
+    }
+
     @PostMapping
     public ApiResponse<InterviewStartResponse> start(@RequestBody InterviewStartRequest request) {
         return ApiResponse.success(interviewSessionService.start(request));

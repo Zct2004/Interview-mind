@@ -58,6 +58,37 @@ public class InterviewSessionService {
     private static final TypeReference<List<String>> STRING_LIST = new TypeReference<>() {
     };
 
+    /** 按创建时间倒序查询历史模拟面试。 */
+    public List<com.interviewmind.dto.InterviewHistoryItemResponse> listHistory() {
+        List<InterviewSession> sessions = sessionMapper.selectList(new LambdaQueryWrapper<InterviewSession>().orderByDesc(InterviewSession::getCreatedAt));
+        if (sessions.isEmpty()) return List.of();
+        List<Long> resumeIds = sessions.stream().map(InterviewSession::getResumeId).filter(java.util.Objects::nonNull).distinct().toList();
+        Map<Long, ResumeProfile> profiles = resumeIds.isEmpty() ? Map.of() : resumeProfileMapper.selectList(new LambdaQueryWrapper<ResumeProfile>().in(ResumeProfile::getResumeId, resumeIds)).stream().collect(Collectors.toMap(ResumeProfile::getResumeId, p -> p, (a, b) -> a));
+        List<Long> sessionIds = sessions.stream().map(InterviewSession::getId).toList();
+        Map<Long, InterviewReport> reports = reportMapper.selectList(new LambdaQueryWrapper<InterviewReport>().in(InterviewReport::getSessionId, sessionIds)).stream().collect(Collectors.toMap(InterviewReport::getSessionId, r -> r, (a, b) -> a));
+        return sessions.stream().map(session -> {
+            ResumeProfile profile = profiles.get(session.getResumeId());
+            InterviewReport saved = reports.get(session.getId());
+            return new com.interviewmind.dto.InterviewHistoryItemResponse(session.getId(), session.getResumeId(), profile == null ? null : profile.getName(), session.getStatus(), session.getTotalQuestions(), saved == null ? null : saved.getTotalScore(), saved == null ? null : saved.getSummary(), session.getStartedAt(), session.getFinishedAt());
+        }).toList();
+    }
+
+    /** 从数据库恢复历史报告和逐题评价。 */
+    public InterviewReportResponse getReport(Long sessionId) {
+        InterviewSession session = requireSession(sessionId);
+        if (!InterviewSession.STATUS_COMPLETED.equals(session.getStatus())) throw new BusinessException(409, "该模拟面试尚未完成，暂无历史报告");
+        InterviewReport saved = reportMapper.selectOne(new LambdaQueryWrapper<InterviewReport>().eq(InterviewReport::getSessionId, sessionId));
+        if (saved == null) throw new BusinessException(404, "该模拟面试的报告不存在");
+        List<InterviewQuestion> questions = questionMapper.selectList(new LambdaQueryWrapper<InterviewQuestion>().eq(InterviewQuestion::getSessionId, sessionId).orderByAsc(InterviewQuestion::getQuestionNo));
+        List<Long> questionIds = questions.stream().map(InterviewQuestion::getId).toList();
+        Map<Long, InterviewAnswer> answers = questionIds.isEmpty() ? Map.of() : answerMapper.selectList(new LambdaQueryWrapper<InterviewAnswer>().in(InterviewAnswer::getQuestionId, questionIds)).stream().collect(Collectors.toMap(InterviewAnswer::getQuestionId, a -> a, (a, b) -> a));
+        List<InterviewQuestionEvaluationResponse> evaluations = questions.stream().map(question -> {
+            InterviewAnswer answer = answers.get(question.getId());
+            return new InterviewQuestionEvaluationResponse(question.getQuestionNo(), question.getQuestion(), answer == null ? null : answer.getAnswerText(), question.getReferenceAnswer(), answer == null ? null : answer.getScore(), answer == null ? null : answer.getAnalysis(), answer == null ? List.of() : toList(answer.getWeakPoints()), answer == null ? List.of() : toList(answer.getSuggestions()));
+        }).toList();
+        return new InterviewReportResponse(sessionId, saved.getTotalScore(), saved.getSummary(), toList(saved.getStrengths()), toList(saved.getWeakPoints()), toList(saved.getSuggestions()), session.getFinishedAt(), evaluations);
+    }
+
     private final InterviewQuestionService interviewQuestionService;
     private final InterviewSessionMapper sessionMapper;
     private final InterviewQuestionMapper questionMapper;
